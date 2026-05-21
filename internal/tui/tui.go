@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -29,13 +30,15 @@ const (
 )
 
 type model struct {
-	pool     *pgxpool.Pool
-	table    table.Model
-	viewport viewport.Model
-	state    viewState
-	sessions []db.Session
-	width    int
-	height   int
+	pool             *pgxpool.Pool
+	table            table.Model
+	viewport         viewport.Model
+	search           textinput.Model
+	state            viewState
+	sessions         []db.Session
+	filteredSessions []db.Session
+	width            int
+	height           int
 }
 
 func Run(pool *pgxpool.Pool) {
@@ -83,11 +86,19 @@ func Run(pool *pgxpool.Pool) {
 		Bold(false)
 	t.SetStyles(st)
 
+	ti := textinput.New()
+	ti.Placeholder = "Search sessions..."
+	ti.CharLimit = 100
+	ti.Width = 40
+	ti.Focus()
+
 	m := model{
-		pool:     pool,
-		table:    t,
-		sessions: sessions,
-		state:    viewTable,
+		pool:             pool,
+		table:            t,
+		search:           ti,
+		sessions:         sessions,
+		filteredSessions: sessions,
+		state:            viewTable,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -98,7 +109,7 @@ func Run(pool *pgxpool.Pool) {
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return textinput.Blink
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -106,43 +117,63 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.table.SetHeight(msg.Height - 8)
+		m.table.SetHeight(msg.Height - 10)
 		m.viewport = viewport.New(msg.Width-4, msg.Height-6)
 		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
-			if m.state == viewPreview {
-				m.state = viewTable
-				return m, nil
-			}
+		case "ctrl+c":
 			return m, tea.Quit
-
-		case "enter":
-			if m.state == viewTable {
-				idx := m.table.Cursor()
-				if idx >= 0 && idx < len(m.sessions) {
-					return m, resumeSession(m.sessions[idx])
-				}
-			}
-
-		case "p":
-			if m.state == viewTable {
-				idx := m.table.Cursor()
-				if idx >= 0 && idx < len(m.sessions) {
-					m.state = viewPreview
-					msgs, _ := db.GetMessages(m.pool, m.sessions[idx].ID)
-					m.viewport.SetContent(renderMessages(msgs))
-					return m, nil
-				}
-			}
 
 		case "esc":
 			if m.state == viewPreview {
 				m.state = viewTable
 				return m, nil
 			}
+
+		case "enter":
+			if m.state == viewTable {
+				idx := m.table.Cursor()
+				if idx >= 0 && idx < len(m.filteredSessions) {
+					return m, resumeSession(m.filteredSessions[idx])
+				}
+			}
+
+		case "p":
+			if m.state == viewTable && !m.search.Focused() {
+				idx := m.table.Cursor()
+				if idx >= 0 && idx < len(m.filteredSessions) {
+					m.state = viewPreview
+					msgs, _ := db.GetMessages(m.pool, m.filteredSessions[idx].ID)
+					m.viewport.SetContent(renderMessages(msgs))
+					return m, nil
+				}
+			}
+
+		case "up", "down":
+			if m.state == viewTable {
+				var cmd tea.Cmd
+				m.table, cmd = m.table.Update(msg)
+				return m, cmd
+			}
+
+		case "tab":
+			// Toggle focus between search and table
+			if m.search.Focused() {
+				m.search.Blur()
+			} else {
+				m.search.Focus()
+			}
+			return m, nil
+		}
+
+		// When search is focused, pass remaining keys to textinput
+		if m.search.Focused() && m.state == viewTable {
+			var cmd tea.Cmd
+			m.search, cmd = m.search.Update(msg)
+			m.filterSessions()
+			return m, cmd
 		}
 	}
 
@@ -164,8 +195,9 @@ func (m model) View() string {
 	}
 
 	header := titleStyle.Render("LLM Sessions")
-	help := statusStyle.Render("enter: resume · p: preview · q: quit")
-	return appStyle.Render(header + "\n\n" + m.table.View() + "\n\n" + help)
+	searchBar := m.search.View()
+	help := statusStyle.Render("tab: toggle focus · ↑↓: navigate · enter: resume · p: preview · ctrl+c: quit")
+	return appStyle.Render(header + "\n\n" + searchBar + "\n\n" + m.table.View() + "\n\n" + help)
 }
 
 func renderMessages(msgs []db.Message) string {
@@ -205,9 +237,41 @@ func buildResumeCmd(s db.Session) *exec.Cmd {
 	return cmd
 }
 
+func (m *model) filterSessions() {
+	query := strings.ToLower(m.search.Value())
+	if query == "" {
+		m.filteredSessions = m.sessions
+	} else {
+		var filtered []db.Session
+		for _, s := range m.sessions {
+			if strings.Contains(strings.ToLower(s.Title), query) ||
+				strings.Contains(strings.ToLower(s.Source), query) ||
+				strings.Contains(strings.ToLower(s.Model), query) ||
+				strings.Contains(strings.ToLower(s.Directory), query) {
+				filtered = append(filtered, s)
+			}
+		}
+		m.filteredSessions = filtered
+	}
+
+	rows := make([]table.Row, len(m.filteredSessions))
+	for i, s := range m.filteredSessions {
+		rows[i] = table.Row{
+			s.UpdatedAt.Format("Jan 02 15:04"),
+			s.Source,
+			truncate(s.Title, 42),
+			s.Model,
+			fmt.Sprintf("%d", s.MessageCount),
+		}
+	}
+	m.table.SetRows(rows)
+	m.table.GotoTop()
+}
+
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
 	return s[:max-1] + "…"
 }
+
