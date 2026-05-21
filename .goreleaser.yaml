@@ -1,0 +1,51 @@
+version: 2
+
+project_name: llm-index
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/main.go
+    binary: llm-index
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+brews:
+  - name: llm-index
+    repository:
+      owner: PanchangulaKrishnacharan        
+      name: llm-index   
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/PanchangulaKrishnacharan/llm-index"
+    description: "Index and resume LLM sessions across OpenCode, Zed, and Codex CLI"
+    license: "MIT"
+    install: |
+      bin.install "llm-index"
+    test: |
+      system "#{bin}/llm-index", "--help"
