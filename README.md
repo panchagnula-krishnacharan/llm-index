@@ -36,7 +36,7 @@ docker run -d --name llm-index-pg \
 ### 2. Build
 
 ```bash
-git clone https://github.com/PanchangulaKrishnacharan/llm-index.git
+git clone https://github.com/panchagnula-krishnacharan/llm-index.git
 cd llm-index
 go build -o llm-index ./cmd/main.go
 ```
@@ -167,7 +167,7 @@ This builds binaries for linux/darwin (amd64 + arm64), creates GitHub releases, 
 ### Homebrew install (after first release)
 
 ```bash
-brew tap PanchangulaKrishnacharan/tap
+brew tap panchagnula-krishnacharan/tap
 brew install llm-index
 ```
 

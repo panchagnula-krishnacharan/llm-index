@@ -38,11 +38,11 @@ changelog:
 brews:
   - name: llm-index
     repository:
-      owner: PanchangulaKrishnacharan        
-      name: llm-index   
+      owner: panchagnula-krishnacharan
+      name: llm-index
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
-    homepage: "https://github.com/PanchangulaKrishnacharan/llm-index"
+    homepage: "https://github.com/panchagnula-krishnacharan/llm-index"
     description: "Index and resume LLM sessions across OpenCode, Zed, and Codex CLI"
     license: "MIT"
     install: |
